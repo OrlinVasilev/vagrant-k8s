@@ -1,0 +1,141 @@
+- hosts: all
+  gather_facts: no
+  tasks:
+
+# Disable SELinux
+  - name: Install libselinux-python
+    yum:
+      name: libselinux-python
+      state: present
+
+  - name: Disable SELinux
+    selinux:
+      state: disabled
+
+# Copy SSH keys to the hosts
+  - name: Set authorized keys
+    authorized_key:
+      user: root
+      state: present
+      key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+# Disable swap
+  - name: SWAP  must be disabled in order for the kubelet to work properly
+    shell:  swapoff -a
+
+# Change the hostname of the hosts
+  - name: Change the hostname
+    hostname:
+      name:  "{{ inventory_hostname }}"
+
+# Generate /etc/hosts file
+  - name: Generate /etc/hosts file
+    template:
+      src=hosts.j2
+      dest=/etc/hosts
+
+# Install and start ntpd
+  - name: Install ntpd
+    yum:
+      name: ntp
+      state: present
+
+  - name: Start service ntpd
+    systemd:
+      name: ntpd
+      state: started
+
+# Install ebtables and ethtool
+  - name: Install ebtables
+    yum:
+      name: ebtables
+      state: present
+
+  - name: Install ethtool
+    yum:
+      name: ethtool
+      state: present
+
+# Install docker
+  - name: Install docker
+    yum:
+      name: docker
+      state: present
+
+# Enable and start docker service
+  - name: Enable service docker
+    systemd:
+      name: docker
+      enabled: yes
+      masked: no
+
+  - name: Start service docker
+    systemd:
+      name: docker
+      state: started
+
+# Add Kubernetes repo
+  - name: Add Kubernetes repo
+    yum_repository:
+      name: Kubernetes
+      description: Kubernetes repo
+      baseurl: https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64
+      enabled: yes
+      gpgkey: https://packages.cloud.google.com/yum/doc/yum-key.gpg https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+      gpgcheck: no
+      repo_gpgcheck: no
+
+# Install kubelet kubeadm kubectl
+  - name: Install kubelet kubeadm kubectl
+    yum: state=present name={{ item }}
+    with_items:
+      - kubelet
+      - kubeadm
+      - kubectl
+
+# Adjust bridge-nf-call-iptables
+  - name: Adjust bridge-nf-call-iptables
+    shell:  echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables
+
+# Enable kubelet service
+  - name: Enable service kubelet
+    systemd:
+      name: kubelet
+      enabled: yes
+      masked: no
+
+- hosts: master
+  gather_facts: no
+  tasks:
+
+# Kubeadm initialize cluster
+  - name: Kubeadm init
+    shell: /usr/bin/kubeadm init --pod-network-cidr=10.244.0.0/16 | /usr/bin/grep "kubeadm join --token"
+    register: out
+  - debug:
+      var: out.stdout
+
+  - name: Setup the master to be able to access the cluster
+    file:
+      path: $HOME/.kube
+      state: directory
+      mode: 0655
+
+  - name: Copy admin.config
+    copy:
+      remote_src: true
+      src: /etc/kubernetes/admin.conf
+      dest: $HOME/.kube/config
+      mode: 0644
+
+  - name: Setup the master to be able to access the cluster
+    shell: |
+      kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.8.0/Documentation/kube-flannel.yml
+      kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/v0.8.0/Documentation/kube-flannel-rbac.yml
+
+- hosts: nodes
+  gather_facts: no
+  tasks:
+
+  - name: Join nodes
+    shell: "{{ hostvars[groups['master'][0]]['out'].stdout }}"
