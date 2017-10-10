@@ -3,8 +3,29 @@
 # -*- mode: ruby -*-
 # vi: set ft=ruby :
 
-Vagrant.configure("2") do |config|
 
+system("
+    case #{ARGV[0]} in
+    'up')
+    echo `pwd`
+      ssh-keygen -t rsa -N \"\" -f ./files/id_rsa
+      ;;
+    'destroy')
+      echo destroy
+      rm -f ./files/id_rsa*
+      ;;
+     'status')
+     ;;
+      *)
+      ;;
+     esac
+")
+
+
+#Create new keys
+
+
+Vagrant.configure("2") do |config|
   # create mgmt node
   config.vm.define "k8s-mgmt" do |mgmt_config|
       mgmt_config.vm.box = "centos/7"
